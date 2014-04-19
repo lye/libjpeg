@@ -9,12 +9,12 @@ package libjpeg
 import "C"
 
 import (
+	"encoding/binary"
+	"fmt"
 	"image"
 	"image/color"
-	"errors"
 	"io"
 	"io/ioutil"
-	"encoding/binary"
 	"unsafe"
 )
 
@@ -22,30 +22,30 @@ func DecodeConfig(r io.Reader) (cfg image.Config, er error) {
 	var soi, width, height int16
 	var components int8
 
-	if er = binary.Read(r, binary.LittleEndian, &soi) ; er != nil {
+	if er = binary.Read(r, binary.LittleEndian, &soi); er != nil {
 		return
 	}
 
-	if er = binary.Read(r, binary.LittleEndian, &width) ; er != nil {
+	if er = binary.Read(r, binary.LittleEndian, &width); er != nil {
 		return
 	}
 
-	if er = binary.Read(r, binary.LittleEndian, &height) ; er != nil {
+	if er = binary.Read(r, binary.LittleEndian, &height); er != nil {
 		return
 	}
 
-	if er = binary.Read(r, binary.LittleEndian, &components) ; er != nil {
+	if er = binary.Read(r, binary.LittleEndian, &components); er != nil {
 		return
 	}
 
-	if components == 1 {
+	if components == 1 || components == 4 {
 		cfg.ColorModel = color.RGBAModel
 
 	} else if components == 3 {
 		cfg.ColorModel = color.GrayModel
 
 	} else {
-		er = errors.New("Invalid number of components")
+		er = fmt.Errorf("Invalid number of components (%d)", components)
 		return
 	}
 
@@ -68,7 +68,7 @@ func decodeGrayscale(cinfo *C.struct_jpeg_decompress_struct) image.Image {
 
 		for x := 0; x < int(cinfo.output_width); x += 1 {
 			off := y * img.Stride
-			img.Pix[off + x] = buf[x]
+			img.Pix[off+x] = buf[x]
 		}
 	}
 
@@ -76,7 +76,7 @@ func decodeGrayscale(cinfo *C.struct_jpeg_decompress_struct) image.Image {
 }
 
 func decodeRGB(cinfo *C.struct_jpeg_decompress_struct) image.Image {
-	buf := make([]byte, int(cinfo.output_width * 3))
+	buf := make([]byte, int(cinfo.output_width*3))
 	scanLine := &buf[0]
 	scanLines := C.JSAMPARRAY(unsafe.Pointer(&scanLine))
 
@@ -90,10 +90,44 @@ func decodeRGB(cinfo *C.struct_jpeg_decompress_struct) image.Image {
 		for x := 0; x < int(cinfo.output_width); x += 1 {
 			off := y * img.Stride
 
-			img.Pix[off + 4 * x + 0] = buf[x * 3 + 0]
-			img.Pix[off + 4 * x + 1] = buf[x * 3 + 1]
-			img.Pix[off + 4 * x + 2] = buf[x * 3 + 2]
-			img.Pix[off + 4 * x + 3] = 255
+			img.Pix[off+4*x+0] = buf[x*3+0]
+			img.Pix[off+4*x+1] = buf[x*3+1]
+			img.Pix[off+4*x+2] = buf[x*3+2]
+			img.Pix[off+4*x+3] = 255
+		}
+	}
+
+	return img
+}
+
+func decodeCMYK(cinfo *C.struct_jpeg_decompress_struct) image.Image {
+	buf := make([]byte, int(cinfo.output_width*4))
+	scanLine := &buf[0]
+	scanLines := C.JSAMPARRAY(unsafe.Pointer(&scanLine))
+
+	img := image.NewRGBA(image.Rect(0, 0, int(cinfo.output_width), int(cinfo.output_height)))
+
+	for cinfo.output_scanline < cinfo.output_height {
+		y := int(cinfo.output_scanline)
+
+		C.jpeg_read_scanlines(cinfo, scanLines, 1)
+
+		for x := 0; x < int(cinfo.output_width); x += 1 {
+			off := y * img.Stride
+
+			c := buf[x*4+0]
+			m := buf[x*4+1]
+			y := buf[x*4+2]
+			k := buf[x*4+3]
+
+			r := uint8(255. * (1. - float64(c)) * (1. - float64(k)))
+			g := uint8(255. * (1. - float64(m)) * (1. - float64(k)))
+			b := uint8(255. * (1. - float64(y)) * (1. - float64(k)))
+
+			img.Pix[off+4*x+0] = r
+			img.Pix[off+4*x+1] = g
+			img.Pix[off+4*x+2] = b
+			img.Pix[off+4*x+3] = 255
 		}
 	}
 
@@ -109,7 +143,7 @@ func Decode(r io.Reader) (img image.Image, er error) {
 	 * with a non-closing io.Reader */
 
 	var wholeFile []byte
-	if wholeFile, er = ioutil.ReadAll(r) ; er != nil {
+	if wholeFile, er = ioutil.ReadAll(r); er != nil {
 		return
 	}
 
@@ -130,8 +164,11 @@ func Decode(r io.Reader) (img image.Image, er error) {
 		} else if cinfo.num_components == 3 {
 			img = decodeRGB(&cinfo)
 
+		} else if cinfo.num_components == 4 {
+			img = decodeCMYK(&cinfo)
+
 		} else {
-			er = errors.New("Invalid number of components")
+			er = fmt.Errorf("Invalid number of components (%d)", cinfo.num_components)
 		}
 
 		if er == nil {

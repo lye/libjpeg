@@ -1,9 +1,9 @@
 package libjpeg
 
 import (
-	"os"
 	"image"
 	"image/png"
+	"os"
 	"testing"
 )
 
@@ -25,7 +25,7 @@ func TestReencode(t *testing.T) {
 	}
 	defer fout.Close()
 
-	if er := png.Encode(fout, img) ; er != nil {
+	if er := png.Encode(fout, img); er != nil {
 		t.Fatal(er)
 	}
 }
