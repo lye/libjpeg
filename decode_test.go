@@ -2,7 +2,6 @@ package libjpeg
 
 import (
 	"image"
-	"image/png"
 	"os"
 	"testing"
 )
@@ -19,13 +18,13 @@ func TestReencode(t *testing.T) {
 		t.Fatal(er)
 	}
 
-	fout, er := os.Create("test.png")
+	fout, er := os.Create("test2.jpg")
 	if er != nil {
 		t.Fatal(er)
 	}
 	defer fout.Close()
 
-	if er := png.Encode(fout, img); er != nil {
+	if er := Encode(fout, img, nil); er != nil {
 		t.Fatal(er)
 	}
 }

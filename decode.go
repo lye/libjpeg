@@ -5,7 +5,6 @@ package libjpeg
 // #include <stddef.h>
 // #include <stdio.h>
 // #include <jpeglib.h>
-// typedef unsigned char *PUCHAR;
 import "C"
 
 import (
@@ -153,7 +152,7 @@ func Decode(r io.Reader) (img image.Image, er error) {
 	cinfo.err = C.jpeg_std_error(&jerr)
 	C.jpeg_CreateDecompress(&cinfo, C.JPEG_LIB_VERSION, C.size_t(unsafe.Sizeof(cinfo)))
 
-	C.jpeg_mem_src(&cinfo, C.PUCHAR(unsafe.Pointer(&wholeFile[0])), C.ulong(len(wholeFile)))
+	C.jpeg_mem_src(&cinfo, (*C.uchar)(unsafe.Pointer(&wholeFile[0])), C.ulong(len(wholeFile)))
 
 	if C.jpeg_read_header(&cinfo, C.TRUE) == C.JPEG_HEADER_OK {
 		C.jpeg_start_decompress(&cinfo)

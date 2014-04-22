@@ -15,7 +15,6 @@ The advantage of using `libjpeg` over the normal `image/jpeg` package is simply 
 
 ### Known issues
 
-* They're read-only right now, only because I had no need to write jpegs.
 * They're using the default libjpeg `jpeg_error_mgr`, which on a catastrophic failure calls `exit(3)`, thus killing your application. A "catastrophic failure", I believe, is only when the libjpeg API is used incorrectly, which should never happen. There's no clean way around it -- the docs say "just set `setjmp`", but that isn't really a tenable option in Go. Swapping it out for a no-op function will probably cause memory corruption.
 * It doesn't support progressive loading in progressive mode (e.g., it just loads the final version of the file).
 * The test suite and documentation are non-existent.
