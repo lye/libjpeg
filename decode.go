@@ -2,8 +2,11 @@ package libjpeg
 
 // #cgo LDFLAGS: -L/usr/local/lib -ljpeg
 // #cgo CFLAGS: -I/usr/local/include
+// #include <sys/types.h>
+// #include <stdlib.h>
 // #include <stddef.h>
 // #include <stdio.h>
+// #include <string.h>
 // #include <jpeglib.h>
 import "C"
 
@@ -54,70 +57,82 @@ func DecodeConfig(r io.Reader) (cfg image.Config, er error) {
 }
 
 func decodeGrayscale(cinfo *C.struct_jpeg_decompress_struct) image.Image {
-	buf := make([]byte, int(cinfo.output_width))
-	scanLine := &buf[0]
+	cbuflen := cinfo.output_width
+	cbuf := C.malloc(C.size_t(cbuflen))
+
+	scanLine := cbuf
 	scanLines := C.JSAMPARRAY(unsafe.Pointer(&scanLine))
 
 	img := image.NewGray(image.Rect(0, 0, int(cinfo.output_width), int(cinfo.output_height)))
 
 	for cinfo.output_scanline < cinfo.output_height {
 		y := int(cinfo.output_scanline)
+		off := y * img.Stride
 
 		C.jpeg_read_scanlines(cinfo, scanLines, 1)
 
 		for x := 0; x < int(cinfo.output_width); x += 1 {
-			off := y * img.Stride
-			img.Pix[off+x] = buf[x]
+			base := uintptr(cbuf) + uintptr(x*1)
+			img.Pix[off+x] = *(*uint8)(unsafe.Pointer(base + 0))
 		}
 	}
+
+	C.free(unsafe.Pointer(cbuf))
 
 	return img
 }
 
 func decodeRGB(cinfo *C.struct_jpeg_decompress_struct) image.Image {
-	buf := make([]byte, int(cinfo.output_width*3))
-	scanLine := &buf[0]
+	cbuflen := cinfo.output_width * 3
+	cbuf := C.malloc(C.size_t(cbuflen))
+
+	scanLine := cbuf
 	scanLines := C.JSAMPARRAY(unsafe.Pointer(&scanLine))
 
 	img := image.NewRGBA(image.Rect(0, 0, int(cinfo.output_width), int(cinfo.output_height)))
 
 	for cinfo.output_scanline < cinfo.output_height {
 		y := int(cinfo.output_scanline)
+		off := y * img.Stride
 
 		C.jpeg_read_scanlines(cinfo, scanLines, 1)
 
 		for x := 0; x < int(cinfo.output_width); x += 1 {
-			off := y * img.Stride
-
-			img.Pix[off+4*x+0] = buf[x*3+0]
-			img.Pix[off+4*x+1] = buf[x*3+1]
-			img.Pix[off+4*x+2] = buf[x*3+2]
+			base := uintptr(cbuf) + uintptr(x*3)
+			img.Pix[off+4*x+0] = *(*uint8)(unsafe.Pointer(base + 0))
+			img.Pix[off+4*x+1] = *(*uint8)(unsafe.Pointer(base + 1))
+			img.Pix[off+4*x+2] = *(*uint8)(unsafe.Pointer(base + 2))
 			img.Pix[off+4*x+3] = 255
 		}
 	}
+
+	C.free(unsafe.Pointer(cbuf))
 
 	return img
 }
 
 func decodeCMYK(cinfo *C.struct_jpeg_decompress_struct) image.Image {
-	buf := make([]byte, int(cinfo.output_width*4))
-	scanLine := &buf[0]
+	cbuflen := cinfo.output_width * 4
+	cbuf := C.malloc(C.size_t(cbuflen))
+
+	scanLine := cbuf
 	scanLines := C.JSAMPARRAY(unsafe.Pointer(&scanLine))
 
 	img := image.NewRGBA(image.Rect(0, 0, int(cinfo.output_width), int(cinfo.output_height)))
 
 	for cinfo.output_scanline < cinfo.output_height {
 		y := int(cinfo.output_scanline)
+		off := y * img.Stride
 
 		C.jpeg_read_scanlines(cinfo, scanLines, 1)
 
 		for x := 0; x < int(cinfo.output_width); x += 1 {
-			off := y * img.Stride
+			base := uintptr(cbuf) + uintptr(x*4)
 
-			c := buf[x*4+0]
-			m := buf[x*4+1]
-			y := buf[x*4+2]
-			k := buf[x*4+3]
+			c := *(*uint8)(unsafe.Pointer(base + 0))
+			m := *(*uint8)(unsafe.Pointer(base + 1))
+			y := *(*uint8)(unsafe.Pointer(base + 2))
+			k := *(*uint8)(unsafe.Pointer(base + 3))
 
 			r := uint8(255. * (1. - float64(c)) * (1. - float64(k)))
 			g := uint8(255. * (1. - float64(m)) * (1. - float64(k)))
@@ -146,37 +161,49 @@ func Decode(r io.Reader) (img image.Image, er error) {
 		return
 	}
 
-	var cinfo C.struct_jpeg_decompress_struct
-	var jerr C.struct_jpeg_error_mgr
+	fileBytes := C.CBytes(wholeFile)
 
-	cinfo.err = C.jpeg_std_error(&jerr)
-	C.jpeg_CreateDecompress(&cinfo, C.JPEG_LIB_VERSION, C.size_t(unsafe.Sizeof(cinfo)))
+	var cinfo *C.struct_jpeg_decompress_struct
+	var jerr *C.struct_jpeg_error_mgr
 
-	C.jpeg_mem_src(&cinfo, (*C.uchar)(unsafe.Pointer(&wholeFile[0])), C.ulong(len(wholeFile)))
+	cinfolen := C.size_t(unsafe.Sizeof(C.struct_jpeg_decompress_struct{}))
+	jerrlen := C.size_t(unsafe.Sizeof(C.struct_jpeg_error_mgr{}))
 
-	if C.jpeg_read_header(&cinfo, C.TRUE) == C.JPEG_HEADER_OK {
-		C.jpeg_start_decompress(&cinfo)
+	cinfo = (*C.struct_jpeg_decompress_struct)(C.malloc(cinfolen))
+	jerr = (*C.struct_jpeg_error_mgr)(C.malloc(jerrlen))
+	C.memset(unsafe.Pointer(cinfo), 0, cinfolen)
+	C.memset(unsafe.Pointer(jerr), 0, jerrlen)
+
+	cinfo.err = C.jpeg_std_error(jerr)
+
+	C.jpeg_CreateDecompress(cinfo, C.JPEG_LIB_VERSION, cinfolen)
+	C.jpeg_mem_src(cinfo, (*C.uchar)(fileBytes), C.ulong(len(wholeFile)))
+
+	if C.jpeg_read_header(cinfo, C.TRUE) == C.JPEG_HEADER_OK {
+		C.jpeg_start_decompress(cinfo)
 
 		if cinfo.num_components == 1 {
-			img = decodeGrayscale(&cinfo)
+			img = decodeGrayscale(cinfo)
 
 		} else if cinfo.num_components == 3 {
-			img = decodeRGB(&cinfo)
+			img = decodeRGB(cinfo)
 
 		} else if cinfo.num_components == 4 {
-			img = decodeCMYK(&cinfo)
+			img = decodeCMYK(cinfo)
 
 		} else {
 			er = fmt.Errorf("Invalid number of components (%d)", cinfo.num_components)
 		}
 
 		if er == nil {
-			C.jpeg_finish_decompress(&cinfo)
+			C.jpeg_finish_decompress(cinfo)
 		}
 	}
 
-	C.jpeg_destroy_decompress(&cinfo)
-
+	C.jpeg_destroy_decompress(cinfo)
+	C.free(unsafe.Pointer(jerr))
+	C.free(unsafe.Pointer(cinfo))
+	C.free(fileBytes)
 	return
 }
 
